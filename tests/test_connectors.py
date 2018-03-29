@@ -88,6 +88,14 @@ class TestConnectors(unittest.TestCase):
             self.assertEquals(data.op_return, '8d18189b12ae315bb3d70c138c78ff76ab5130484187c33d1a9187bc29ca8d30')
             self.assertEquals('mh2B8UhBUAiyPCw6ryB3me4cQen3Nr4m7E', data.signing_key)
 
+    def test_bitcoind_parsing(self):
+        with open('data/transaction_responses/bitcoind_rawtransaction.json') as trx_file:
+            trx_json = json.load(trx_file)
+            connector = BitcoindConnector(port=8332)
+            data = connector.parse_tx(trx_json)
+            self.assertEquals(data.op_return, '2e5e4c79c8a9abae9665215fec51d123c944ce144ce5e15ccacd4404b3dcb0fb')
+            self.assertEquals('n28YSnowHzLwbkCekMZq9iGdcSEjTNaRKA', data.signing_key)
+
     def test_etherscan_parsing(self):
         with open('data/transaction_responses/etherscan_tx.json') as trx_file:
             trx_json = json.load(trx_file)
@@ -95,3 +103,8 @@ class TestConnectors(unittest.TestCase):
             data = connector.parse_tx(trx_json)
             self.assertEquals(data.op_return, '0x8438d5be1cb1e8eed22dc510e0154cc896b644521b4dd3ad6f838b884af921ea')
             self.assertEquals('0xfc522b943d068116074c1c36839515fac0aa224e', data.signing_key)
+
+    def test_bitcoind_connection(self):
+        connector = BitcoindConnector(port=8332)
+        data = connector.lookup_tx("2484fb7360780ea223fdb3bed0895838cd31c62f4bf7ba0bc4b00e8805a614bf")
+        self.assertEquals(data.op_return, '2e5e4c79c8a9abae9665215fec51d123c944ce144ce5e15ccacd4404b3dcb0fb')

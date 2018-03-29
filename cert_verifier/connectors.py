@@ -4,9 +4,10 @@ Connectors supporting Bitcoin transaction lookups. This is used in the Blockchai
 """
 import logging
 
-import requests
+import requests,codecs, json
 from cert_core import BlockchainType, BlockcertVersion, Chain
 from cert_core import PUBKEY_PREFIX
+from bitcoin import RegTestParams, wallet
 
 from cert_verifier import IssuerInfo, IssuerKey
 from cert_verifier import TransactionData
@@ -21,8 +22,10 @@ def createTransactionLookupConnector(chain=Chain.bitcoin_mainnet, options=None):
     :param chain: which chain, supported values are testnet and mainnet
     :return: connector for looking up transactions
     """
-    if chain == Chain.mockchain or chain == Chain.bitcoin_regtest:
+    if chain == Chain.mockchain:
         return MockConnector(chain)
+    elif chain == Chain.bitcoin_regtest:
+        return BitcoinRegtestConnector(chain)
     elif chain.blockchain_type == BlockchainType.ethereum:
         if options and 'etherscan_api_token' in options:
             etherscan_api_token = options['etherscan_api_token']
@@ -74,6 +77,7 @@ class FallbackConnector(TransactionLookupConnector):
 
     def lookup_tx(self, txid):
         exceptions = []
+        logging.warning(("self=%", str(self)))
         for connector in self.connectors:
             try:
                 response = connector.lookup_tx(txid)
@@ -83,6 +87,12 @@ class FallbackConnector(TransactionLookupConnector):
                 logging.warning('Error looking up transaction, trying more connectors')
                 exceptions.append(e)
         raise InvalidTransactionError(exceptions)
+
+
+class BitcoinRegtestConnector(FallbackConnector):
+    def __init__(self, chain):
+        self.chain = chain
+        self.connectors = [BitcoindConnector(8332), MockConnector(chain)]
 
 
 class BlockchainInfoConnector(TransactionLookupConnector):
@@ -168,6 +178,52 @@ class BlockcypherConnector(TransactionLookupConnector):
             else:
                 if o.get('spent_by'):
                     revoked.add(o.get('addresses')[0])
+        if not script:
+            logging.error('transaction response is missing op_return script: %s', json_response)
+            raise InvalidTransactionError('transaction response is missing op_return script' % json_response)
+        return TransactionData(signing_key, script, time, revoked)
+
+
+class BitcoindConnector(TransactionLookupConnector):
+    def __init__(self, port):
+        self.baseurl = 'http://localhost:%s' % str(port)
+        self.txurl = self.baseurl + '/rest/tx/%s.json'
+        self.blockurl = self.baseurl + '/rest/block/%s.json'
+
+    def fetch_tx(self, txid):
+        r = requests.get(self.txurl % txid)
+        self.check_response(r=r, url=self.txurl, hash=txid)
+        result = r.json()
+        blockhash = result['blockhash']
+
+        r = requests.get(self.blockurl % blockhash)
+        self.check_response(r=r, url=self.blockurl, hash=blockhash)
+        result['blocktime'] = r.json()['time']
+        return result
+
+    def check_response(self, r, url, hash):
+        if r.status_code != 200:
+            logging.error('Error looking up transaction_id with url=%s, txid or block hash=%s, status_code=%d, error_message=%s', url, hash, r.status_code)
+            try:
+                r.raise_for_status()
+            except Exception as e:
+                logging.error('response error message=%s', str(e))
+
+            raise InvalidTransactionError('error looking up transaction_id or block hash=%s' % hash)
+
+    def parse_tx(self, json_response):
+        revoked = set()
+        script = None
+        time = json_response['blocktime']
+        compressed_pubkey = json_response['vin'][0]['scriptSig']['asm'].split()[1]
+        p2pkhaddress = wallet.P2PKHBitcoinAddress.from_pubkey(pubkey=codecs.decode(compressed_pubkey, "hex_codec"))
+        p2pkhaddress.nVersion = RegTestParams.BASE58_PREFIXES['PUBKEY_ADDR']
+        signing_key = str(p2pkhaddress)
+
+        for o in json_response['vout']:
+            if float(o.get('value', 1)) == 0:
+                script = o['scriptPubKey']['hex'][4:] # top 2byte is opcode
+
         if not script:
             logging.error('transaction response is missing op_return script: %s', json_response)
             raise InvalidTransactionError('transaction response is missing op_return script' % json_response)

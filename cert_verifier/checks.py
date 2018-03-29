@@ -307,6 +307,6 @@ def create_verification_steps(certificate_model, transaction_info, issuer_info, 
         steps.append(VerificationGroup(steps=[authenticity_checker],
                                        name='Checking authenticity'))
 
-    if chain == Chain.mockchain or chain == Chain.bitcoin_regtest:
+    if chain == Chain.mockchain:
         return VerificationGroup(steps=steps, name='Validation', success_status=StepStatus.mock_passed)
     return VerificationGroup(steps=steps, name='Validation')
